@@ -4,6 +4,7 @@ package parser
 abstract class Expr
 case class Number(value: Double) extends Expr
 case class StringLiteral(value: String) extends Expr
+case class BooleanLiteral(value: Boolean) extends Expr
 case class UnaryOp(operator: String, arg: Expr) extends Expr
 case class BinaryOp(operator: String, left: Expr, right: Expr) extends Expr
 case class Function(name: String, args: List[Expr]) extends Expr

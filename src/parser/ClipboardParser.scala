@@ -26,9 +26,11 @@ class ClipBoardParser extends JavaTokenParsers with PackratParsers {
 		
 	lazy val expr: PackratParser[Expr] =
 		binaryOp | //order matters, switch this and factor and all fail
-		func | clipboardRef |
 		parens |
-		literal
+		literal |
+		func | 
+		clipboardRef
+		
 
 	lazy val parens: PackratParser[Expr] = 
 		"("~>expr<~")" ^^ {e => Parens(e)}
@@ -38,18 +40,22 @@ class ClipBoardParser extends JavaTokenParsers with PackratParsers {
 			case "@"~f~"("~args~")" => Function(f, args)
 		}
 
+	lazy val boolean: PackratParser[Expr] = 
+		("true" | "false") ^^ {b => BooleanLiteral(b == "true")}
+	
 	lazy val literal: PackratParser[Expr] =
+		boolean |
 		floatingPointNumber ^^ { x => Number(x.toFloat) } |
 		stringLiteral ^^ { s => StringLiteral(s.drop(1).dropRight(1))}
 		
 	
-	protected def parsing[T](s: String)(implicit p: Parser[T]): T = {
+	protected def parsing[T](s: String)(implicit p: Parser[T]): T =
 		parseAll(p, s) match {
 			case Success(t, _) =>  t
-			case NoSuccess(msg, _) => throw new IllegalArgumentException(
-				"Could not parse '" + s + "': " + msg)
+			case NoSuccess(msg, _) => 
+				throw new IllegalArgumentException(s"Could not parse '$s' $msg")
 		}
-	}
+
 	
 }
 
@@ -155,6 +161,7 @@ object ExecDynamic extends ClipBoardParser{
 	def apply[T](e: Expr): Value = e match {
 		case Number(n) => NumberValue(n)
 		case StringLiteral(s) => StringValue(s)
+		case BooleanLiteral(b) => BooleanValue(b)
 		case Parens(e) => apply(e)
 		case BinaryOp(op, lhs, rhs) => op match{
 			case "+" => NumberValue(apply(lhs).doubleValue + apply(rhs).doubleValue)
@@ -167,12 +174,16 @@ object ExecDynamic extends ClipBoardParser{
 		case LocalClipboardRef(refs) => resolveClipboardRef(refs).get
 	}
 	
+	val get: List[Value] => Value = {
+		case List(PageValue(m), StringValue(s)) => m(s)
+	}
+	
 	val silly_string: List[Value] => Value = 
 			{case s :: Nil => 
 				val s2 = s.stringValue; 
 				StringValue(s"lol wut is this: $s2")
 			}
-	
+	val and: List[Value] => Value = {case List(a, b) => BooleanValue(a.boolValue && b.boolValue)}
 	val a_plus_b: List[Value] => Value = {case List(a, b) => NumberValue(a.doubleValue+b.doubleValue)}
 	val sum: List[Value] => Value = {(x) => println(s"sum of $x"); NumberValue(x.map(_.doubleValue).sum)}
 	val product: List[Value] => Value = {(x) => println(s"product of $x"); NumberValue(x.map(_.doubleValue).product)}
@@ -181,7 +192,9 @@ object ExecDynamic extends ClipBoardParser{
 		Map("sum" -> sum, 
 			"product" -> product, 
 			"a_plus_b" -> a_plus_b,
-			"silly_string" -> silly_string
+			"silly_string" -> silly_string,
+			"get" -> get,
+			"and" -> and
 		)
 
 	//type checking is done at runtime, each function is of signature List(args) => result
@@ -190,26 +203,24 @@ object ExecDynamic extends ClipBoardParser{
 		funcs.getOrElse(f, throw new UnsupportedOperationException(s"no function $f exists"))
 	}
 	
-	val env1: Map[String, ClipboardEntity] = 
+	val env1: Map[String, Value] = 
 		Map("foo"->
-			ClipboardEntity(PageValue(Map("bar"->
-				ClipboardEntity(PageValue(Map("baz"->
-					ClipboardEntity(NumberValue(1.0))
-				)))
-			)))
+			PageValue(Map("bar"->
+				PageValue(Map("baz"->
+					NumberValue(1.0)
+				))
+			))
 		)
 	
 	
-	def resolveClipboardRef[T](refs: List[ClipboardIdent], env: Map[String, ClipboardEntity] = env1): Option[Value] = refs match {
-		case h :: t => env.get(h.name).map(_.v).flatMap{v => if (t==Nil) Some(v) else v match {
+	def resolveClipboardRef[T](refs: List[ClipboardIdent], env: Map[String, Value] = env1): Option[Value] = refs match {
+		case h :: t => println(s"refs => $refs, env => $env"); env.get(h.name).flatMap{v => if (t==Nil) Some(v) else v match {
 				case PageValue(m) => resolveClipboardRef(t, m)
 				case v: Value => throw new NoSuchElementException("clipboard element not found") //terms to resolve, but to what do I apply them?
 		}}
 		case Nil =>  throw new IllegalArgumentException("attempted to resolve empty list of ClipboardIdent's")
 	}
 }
-
-case class ClipboardEntity(v: Value)
 
 sealed trait Value{
     def doubleValue: Double
@@ -237,7 +248,7 @@ case class StringValue(literal: String) extends Value{
     def stringValue = literal
 }
 
-case class PageValue(contents: Map[String, ClipboardEntity]) extends Value{
+case class PageValue(contents: Map[String, Value]) extends Value{
     def doubleValue = throw new UnsupportedOperationException
     def boolValue   = throw new UnsupportedOperationException
     def stringValue = throw new UnsupportedOperationException
@@ -254,5 +265,15 @@ object ExecTests extends Application{
 	println(ExecDynamic("foo.bar"))
 	println(ExecDynamic("foo"))
 
-	println(ExecDynamic("@silly_string(\"check this out\")"))	
+	//functions with strings
+	println(ExecDynamic("@silly_string(\"check this out\")"))
+	
+	//let's write our own get(clipboard, key) function, also nesting functions
+	println(ExecDynamic("@silly_string(@get(foo.bar, \"baz\"))"))
+	
+	//boolean functions
+	println(ExecDynamic("@and(true, true)"))
+	println(ExecDynamic("@and(true, @and(true, @and(true, @and(true, @and(true, @and(true, @and(true, true)))))))"))
+	println(ExecDynamic("@and(false, true)"))	
+	println(ExecDynamic("@and(false, false)"))
 }
