@@ -143,3 +143,116 @@ class ClipBoardParsersTest extends ClipBoardParser with FlatSpec with ShouldMatc
 
 
 
+
+//all return types are double. TODO: return type with possible values String, Page, Double
+object ExecDynamic extends ClipBoardParser{
+	
+	def apply[T](s: String): String = {
+		val r = apply(parsing(s)(expr))
+		s"$s => $r"
+	}
+	
+	def apply[T](e: Expr): Value = e match {
+		case Number(n) => NumberValue(n)
+		case StringLiteral(s) => StringValue(s)
+		case Parens(e) => apply(e)
+		case BinaryOp(op, lhs, rhs) => op match{
+			case "+" => NumberValue(apply(lhs).doubleValue + apply(rhs).doubleValue)
+			case "-" => NumberValue(apply(lhs).doubleValue - apply(rhs).doubleValue)
+			case "/" => NumberValue(apply(lhs).doubleValue / apply(rhs).doubleValue)
+			case "*" => NumberValue(apply(lhs).doubleValue * apply(rhs).doubleValue)
+		}
+		case Function(f, args) => resolveFunction(f)(args.map(apply(_)))
+		case ClipboardRef(refs) => resolveClipboardRef(refs).get
+		case LocalClipboardRef(refs) => resolveClipboardRef(refs).get
+	}
+	
+	val silly_string: List[Value] => Value = 
+			{case s :: Nil => 
+				val s2 = s.stringValue; 
+				StringValue(s"lol wut is this: $s2")
+			}
+	
+	val a_plus_b: List[Value] => Value = {case List(a, b) => NumberValue(a.doubleValue+b.doubleValue)}
+	val sum: List[Value] => Value = {(x) => println(s"sum of $x"); NumberValue(x.map(_.doubleValue).sum)}
+	val product: List[Value] => Value = {(x) => println(s"product of $x"); NumberValue(x.map(_.doubleValue).product)}
+	
+	val funcs: Map[String, List[Value] => Value] = 
+		Map("sum" -> sum, 
+			"product" -> product, 
+			"a_plus_b" -> a_plus_b,
+			"silly_string" -> silly_string
+		)
+
+	//type checking is done at runtime, each function is of signature List(args) => result
+	//all args are call by value/strict eval
+	def resolveFunction(f: String): List[Value] => Value = {
+		funcs.getOrElse(f, throw new UnsupportedOperationException(s"no function $f exists"))
+	}
+	
+	val env1: Map[String, ClipboardEntity] = 
+		Map("foo"->
+			ClipboardEntity(PageValue(Map("bar"->
+				ClipboardEntity(PageValue(Map("baz"->
+					ClipboardEntity(NumberValue(1.0))
+				)))
+			)))
+		)
+	
+	
+	def resolveClipboardRef[T](refs: List[ClipboardIdent], env: Map[String, ClipboardEntity] = env1): Option[Value] = refs match {
+		case h :: t => env.get(h.name).map(_.v).flatMap{v => if (t==Nil) Some(v) else v match {
+				case PageValue(m) => resolveClipboardRef(t, m)
+				case v: Value => throw new NoSuchElementException("clipboard element not found") //terms to resolve, but to what do I apply them?
+		}}
+		case Nil =>  throw new IllegalArgumentException("attempted to resolve empty list of ClipboardIdent's")
+	}
+}
+
+case class ClipboardEntity(v: Value)
+
+sealed trait Value{
+    def doubleValue: Double
+    def boolValue: Boolean
+    def stringValue: String
+}
+
+case class NumberValue(literal:Double) extends Value{
+    def doubleValue = literal
+    def boolValue   = literal != 0.0
+    def stringValue = literal.toString
+    override def toString  = literal.toString
+}
+    
+case class BooleanValue(literal:Boolean) extends Value{
+    def doubleValue = if (literal) 1.0 else 0.0
+    def boolValue   = literal
+    def stringValue = literal.toString
+    override def toString  = literal.toString
+}
+    
+case class StringValue(literal: String) extends Value{
+    def doubleValue = literal.toDouble
+    def boolValue   = if (literal.toLowerCase == "false") false else true
+    def stringValue = literal
+}
+
+case class PageValue(contents: Map[String, ClipboardEntity]) extends Value{
+    def doubleValue = throw new UnsupportedOperationException
+    def boolValue   = throw new UnsupportedOperationException
+    def stringValue = throw new UnsupportedOperationException
+}
+
+object ExecTests extends Application{
+	//some numeric functions
+	println(ExecDynamic("@sum((5+5 - 2) + foo.bar.baz, 5.0)"))
+	println(ExecDynamic("@product(1 + foo.bar.baz, 5.0, 2.0)"))
+	println(ExecDynamic("@a_plus_b(1, 2)"))
+	
+	//lets inspect the clipboard
+	println(ExecDynamic("foo.bar.baz"))
+	println(ExecDynamic("foo.bar"))
+	println(ExecDynamic("foo"))
+
+	println(ExecDynamic("@silly_string(\"check this out\")"))	
+}
