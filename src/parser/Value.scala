@@ -33,7 +33,7 @@ case class PageValue(contents: Map[String, Value]) extends Value{
     def stringValue = throw new UnsupportedOperationException
 }
 
-case class ListValue(contents: Vector[Value]) extends Value{ //0 index
+case class ListValue(contents: Seq[Value]) extends Value{ //0 index
     def intValue = throw new UnsupportedOperationException
     def boolValue   = throw new UnsupportedOperationException
     def stringValue = throw new UnsupportedOperationException

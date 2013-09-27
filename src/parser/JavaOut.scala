@@ -8,7 +8,7 @@ object JavaOut extends ClipBoardParser{
 		case BinaryOp(op, lhs, rhs) => buildExpr(lhs) + " " + op + " " + buildExpr(rhs)
 		case Function(f, args) => f + "(" + args.map{buildExpr}.mkString(",") + ")"
 		case ClipboardRef(refs) => refs.map{buildRef}.mkString(".")
-		case LocalClipboardRef(refs) => refs.map{buildRef}.mkString(".") //whatever, let's just simplify this. local is always in frame
+		case LocalClipboardRef(refs) => refs.map{buildRef}.mkString(".") //simplifying. dot ref is always in scope as well
 	}
 	
 	def buildRef(c: ClipboardIdent): String = c match {
